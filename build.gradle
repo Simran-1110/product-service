@@ -1,0 +1,137 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '2.7.18'
+	id 'io.spring.dependency-management' version '1.0.15.RELEASE'
+	id 'com.google.protobuf' version '0.8.18'
+	id 'pmd'
+	id 'checkstyle'
+}
+
+group = 'com.nuclei'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_11
+	targetCompatibility = JavaVersion.VERSION_11
+}
+
+configurations {
+	compileOnly {
+		extendsFrom annotationProcessor
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+protobuf {
+	protoc {
+		artifact = "com.google.protobuf:protoc:3.25.3"
+	}
+	plugins {
+		grpc {
+			artifact = "io.grpc:protoc-gen-grpc-java:1.63.0"
+		}
+	}
+	generateProtoTasks {
+		all().each { task ->
+			task.builtins {
+				java {}
+			}
+			task.plugins {
+				grpc {}
+			}
+		}
+	}
+}
+
+sourceSets {
+	main {
+		proto {
+			srcDir 'proto/src/main/proto'
+		}
+		java {
+			// Ensure generated sources are in classpath
+			srcDirs += 'build/generated/source/proto/main/java'
+			srcDirs += 'build/generated/source/proto/main/grpc'
+		}
+	}
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	compileOnly 'org.projectlombok:lombok'
+	runtimeOnly 'com.mysql:mysql-connector-j'
+	annotationProcessor 'org.projectlombok:lombok'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	// For gRPC + Protobuf (manual addition)
+	implementation 'io.grpc:grpc-netty-shaded:1.63.0'
+	implementation 'io.grpc:grpc-protobuf:1.63.0'
+	implementation 'io.grpc:grpc-stub:1.63.0'
+	implementation 'net.devh:grpc-server-spring-boot-starter:2.13.1.RELEASE'
+	implementation "org.mapstruct:mapstruct:1.5.5.Final"
+	annotationProcessor "org.mapstruct:mapstruct-processor:1.5.5.Final"
+	compileOnly 'org.apache.tomcat:annotations-api:6.0.53' // Java 11 workaround
+
+// Logging
+	implementation 'org.slf4j:slf4j-api:1.7.36'
+	implementation 'ch.qos.logback:logback-core:1.2.12'
+	implementation 'ch.qos.logback:logback-classic:1.2.12'
+	implementation("io.grpc:grpc-netty-shaded:1.63.0") {
+		exclude group: "ch.qos.logback"
+	}
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'org.mockito:mockito-core:5.3.1'
+	testImplementation 'org.assertj:assertj-core:3.24.2'
+}
+
+configurations.all {
+	resolutionStrategy {
+		force 'ch.qos.logback:logback-classic:1.2.12'
+		force 'ch.qos.logback:logback-core:1.2.12'
+	}
+}
+
+tasks.withType(JavaCompile) {
+	options.encoding = 'UTF-8'
+	options.compilerArgs += ['-parameters']
+}
+
+
+apply plugin: 'checkstyle'
+
+tasks.withType(Checkstyle) {
+	showViolations true
+	exclude '**/mock/**/*'
+}
+checkstyle {
+	toolVersion '8.11'
+	sourceSets = [project.sourceSets.main]
+}
+tasks.withType(Checkstyle).each { checkstyleTask ->
+	checkstyleTask.doLast {
+		reports.all { report ->
+			def outputFile = report.destination
+			if (outputFile.exists() && outputFile.text.contains("<error ")) {
+				throw new GradleException("There were checkstyle warnings! For more info check $outputFile")
+			}
+		}
+	}
+}
+
+apply plugin: 'pmd'
+
+pmd {
+	toolVersion = '6.26.0'
+	ruleSets = []
+	ruleSetFiles = files("$rootDir/config/pmd/ruleset.xml")
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
