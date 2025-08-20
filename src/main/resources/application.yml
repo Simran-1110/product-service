@@ -1,0 +1,33 @@
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/productdb?useSSL=false&serverTimezone=UTC
+    username: root
+    password: password
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: true
+  main:
+    allow-bean-definition-overriding: true
+
+server:
+  port: 8081
+
+reservation:
+  ttl-seconds: 3000 # 5 minutes
+
+sweeper:
+  cron: "0 */1 * * * *" # every 1 minute
+
+grpc:
+  server:
+    port: 9091
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus, info
