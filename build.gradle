@@ -72,6 +72,10 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
+	// Redis + Cache
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+	implementation 'org.springframework.boot:spring-boot-starter-cache'
+
 	// Micrometer Prometheus
 	implementation 'io.micrometer:micrometer-core'
 	implementation 'io.micrometer:micrometer-registry-prometheus'
@@ -93,6 +97,9 @@ dependencies {
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
 
+	// Jackson JSR310 for Java 8 date/time support
+	implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
 	// JDBC driver (only one declaration needed)
 	runtimeOnly 'mysql:mysql-connector-java:8.0.33'
 
@@ -106,6 +113,7 @@ dependencies {
 	testImplementation 'org.assertj:assertj-core:3.24.2'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testImplementation 'com.h2database:h2'
+	testImplementation 'org.springframework.boot:spring-boot-starter-data-redis'
 }
 
 configurations.all {

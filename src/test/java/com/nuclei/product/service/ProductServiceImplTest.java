@@ -9,6 +9,7 @@ import com.nuclei.product.exception.NotFoundException;
 import com.nuclei.product.repository.ProductRepository;
 import com.nuclei.product.repository.ReservationRepository;
 import com.nuclei.product.service.impl.ProductServiceImpl;
+import com.nuclei.product.service.IRedisCacheService;
 import com.nuclei.product.validation.ProductValidator;
 import com.nuclei.product.validation.ReservationValidator;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,12 +37,14 @@ public class ProductServiceImplTest {
   private ProductValidator productValidator;
   @Mock
   private ReservationValidator reservationValidator;
+  @Mock
+  private IRedisCacheService redisCacheService;
 
   private IProductService service;
 
   @BeforeEach
   void setUp() {
-    service = new ProductServiceImpl(productRepository, reservationRepository, productValidator, reservationValidator);
+    service = new ProductServiceImpl(productRepository, reservationRepository, productValidator, reservationValidator, redisCacheService);
   }
 
   private ProductEntity newProduct(Long id, long stock, double price, ProductStatusEnums status) {
@@ -165,14 +168,14 @@ public class ProductServiceImplTest {
 
   @Test
   void reserveStock_success_decrementsAndCreatesReservation() {
-    ReserveStockDto dto = ReserveStockDto.builder().productId(1L).quantity(2L).build();
+    ReserveStockDto dto = ReserveStockDto.builder().productId(4L).quantity(2L).idempotencyKey("abc").build();
     doNothing().when(reservationValidator).validateReserve(dto);
 
-    ProductEntity product = newProduct(1L, 5L, 10.0, ProductStatusEnums.ACTIVE);
+    ProductEntity product = newProduct(4L, 5L, 10.0, ProductStatusEnums.ACTIVE);
     product.setVersion(1L);
-    when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+    when(productRepository.findByIdForUpdate(4L)).thenReturn(Optional.of(product));
 
-    ReservationEntity saved = ReservationEntity.builder().reservationId("r-new").productId(1L).quantity(2L).status("IN_PROGRESS").build();
+    ReservationEntity saved = ReservationEntity.builder().reservationId("r-new").productId(4L).quantity(2L).status("IN_PROGRESS").build();
     when(reservationRepository.save(any(ReservationEntity.class))).thenReturn(saved);
 
     ReservationEntity out = service.reserveStock(dto);

@@ -9,6 +9,7 @@ import com.nuclei.product.exception.NotFoundException;
 import com.nuclei.product.repository.ProductRepository;
 import com.nuclei.product.repository.ReservationRepository;
 import com.nuclei.product.service.IProductService;
+import com.nuclei.product.service.IRedisCacheService;
 import com.nuclei.product.validation.ProductValidator;
 import com.nuclei.product.validation.ReservationValidator;
 import org.springframework.data.domain.*;
@@ -19,7 +20,11 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.persistence.criteria.Predicate;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 
 @Service
 public class ProductServiceImpl implements IProductService {
@@ -28,15 +33,18 @@ public class ProductServiceImpl implements IProductService {
   private final ReservationRepository reservationRepository;
   private final ProductValidator productValidator;
   private final ReservationValidator reservationValidator;
+  private final IRedisCacheService redisCacheService;
 
   public ProductServiceImpl(final ProductRepository productRepository,
                             final ReservationRepository reservationRepository,
                             final ProductValidator productValidator,
-                            final ReservationValidator reservationValidator) {
+                            final ReservationValidator reservationValidator,
+                            final IRedisCacheService redisCacheService) {
     this.productRepository = productRepository;
     this.reservationRepository = reservationRepository;
     this.productValidator = productValidator;
     this.reservationValidator = reservationValidator;
+    this.redisCacheService = redisCacheService;
   }
 
   @Override
@@ -47,12 +55,30 @@ public class ProductServiceImpl implements IProductService {
     if (product.getStockQuantity() == null) {
       product.setStockQuantity(0L);
     }
-    return productRepository.saveAndFlush(product);
+    ProductEntity saved = productRepository.saveAndFlush(product);
+    
+    // Cache the newly created product
+    redisCacheService.cacheProduct(saved.getId(), saved);
+    
+    return saved;
   }
 
   @Override
   public Optional<ProductEntity> getProductById(final Long id) {
-    return productRepository.findById(id);
+    // Try cache first
+    Optional<ProductEntity> cached = redisCacheService.getCachedProduct(id);
+    if (cached.isPresent()) {
+      return cached;
+    }
+    
+    // Cache miss - get from database
+    Optional<ProductEntity> product = productRepository.findById(id);
+    if (product.isPresent()) {
+      // Cache the product for future requests
+      redisCacheService.cacheProduct(product.get().getId(), product.get());
+    }
+    
+    return product;
   }
 
   @Override
@@ -86,7 +112,12 @@ public class ProductServiceImpl implements IProductService {
       throw new IllegalStateException("version mismatch");
     }
 
-    return productRepository.saveAndFlush(existing);
+    ProductEntity updated = productRepository.saveAndFlush(existing);
+    
+    // Invalidate caches when product is modified
+    redisCacheService.onProductModified(existing.getId());
+    
+    return updated;
   }
 
   @Override
@@ -97,11 +128,39 @@ public class ProductServiceImpl implements IProductService {
     
     // Soft delete: mark as DISCONTINUED instead of hard delete
     existing.setStatus(ProductStatusEnums.DISCONTINUED);
-    return productRepository.saveAndFlush(existing);
+    ProductEntity deleted = productRepository.saveAndFlush(existing);
+    
+    // Invalidate caches when product is deleted
+    redisCacheService.onProductDeleted(id);
+    
+    return deleted;
   }
 
   @Override
   public Page<ProductEntity> listProducts(final ListProductsDto criteria) {
+    // Generate cache key for this specific query
+    Map<String, Object> filters = new HashMap<>();
+    if (criteria.getMinPriceAmount() != null) {
+      filters.put("minPrice", criteria.getMinPriceAmount());
+    }
+    if (criteria.getMaxPriceAmount() != null) {
+      filters.put("maxPrice", criteria.getMaxPriceAmount());
+    }
+    
+    String cacheKey = redisCacheService.generateProductListCacheKey(
+        criteria.getPage(), 
+        criteria.getPageSize(), 
+        criteria.getOnlyAvailable(), 
+        filters
+    );
+    
+    // Try cache first
+    Optional<Page<ProductEntity>> cached = redisCacheService.getCachedProductList(cacheKey);
+    if (cached.isPresent()) {
+      return cached.get();
+    }
+    
+    // Cache miss - query database
     final Pageable pageable = PageRequest.of(Math.max(0, criteria.getPage() - 1), Math.max(1, criteria.getPageSize()), Sort.by("id").descending());
     
     // Build dynamic specification for filtering
@@ -126,7 +185,12 @@ public class ProductServiceImpl implements IProductService {
     // Always exclude discontinued products unless specifically requested
     spec = spec.and((root, query, cb) -> cb.notEqual(root.get("status"), ProductStatusEnums.DISCONTINUED));
     
-    return productRepository.findAll(spec, pageable);
+    Page<ProductEntity> result = productRepository.findAll(spec, pageable);
+    
+    // Cache the result for future requests
+    redisCacheService.cacheProductList(cacheKey, result);
+    
+    return result;
   }
 
   /* -------------------------
@@ -146,7 +210,7 @@ public class ProductServiceImpl implements IProductService {
       }
     }
 
-    final ProductEntity product = productRepository.findById(request.getProductId())
+    final ProductEntity product = productRepository.findByIdForUpdate(request.getProductId())
         .orElseThrow(() -> new NotFoundException("product not found: " + request.getProductId()));
 
     // Check if product is available for reservation
@@ -178,12 +242,14 @@ public class ProductServiceImpl implements IProductService {
     final Integer ttlSeconds = request.getTtlSeconds();
     if (ttlSeconds != null && ttlSeconds > 0) {
       reservation.setTtlExpiresAt(Instant.now().plus(ttlSeconds, ChronoUnit.SECONDS));
-    } else {
-      reservation.setTtlExpiresAt(Instant.now().plus(600, ChronoUnit.SECONDS));
     }
 
-    reservationRepository.save(reservation);
-    return reservation;
+    ReservationEntity savedReservation = reservationRepository.save(reservation);
+    
+    // Invalidate list caches when stock changes (but not product metadata caches)
+    redisCacheService.onStockModified(request.getProductId());
+    
+    return savedReservation;
   }
 
   @Override
@@ -218,13 +284,21 @@ public class ProductServiceImpl implements IProductService {
       return res;
     }
 
-    final ProductEntity p = productRepository.findByIdForUpdate(res.getProductId())
+    // Release the stock back to the product
+    final ProductEntity product = productRepository.findByIdForUpdate(res.getProductId())
         .orElseThrow(() -> new NotFoundException("product not found: " + res.getProductId()));
 
-    p.setStockQuantity(p.getStockQuantity() + res.getQuantity());
-    productRepository.save(p);
+    product.setStockQuantity(product.getStockQuantity() + res.getQuantity());
+    productRepository.save(product);
 
+    // Mark reservation as released
     res.setStatus("RELEASED");
-    return reservationRepository.save(res);
+    reservationRepository.save(res);
+    
+    // Invalidate list caches when stock changes (but not product metadata caches)
+    redisCacheService.onStockModified(res.getProductId());
+    
+    return res;
   }
 }
+

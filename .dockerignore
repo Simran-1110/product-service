@@ -1,0 +1,10 @@
+.gradle
+build
+target
+out
+.git
+*.log
+.DS_Store
+.idea
+*.iml
+*.class
