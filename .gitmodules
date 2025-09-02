@@ -1,0 +1,3 @@
+[submodule "proto"]
+	path = proto
+	url = https://github.com/Simran-1110/grpc-protos.git

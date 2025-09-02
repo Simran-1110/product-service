@@ -1,0 +1,84 @@
+spring:
+  profiles:
+  
+  datasource:
+    url: jdbc:mysql://localhost:3306/productdb?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
+    username: app
+    password: password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: true
+        show_sql: true
+  
+  # Redis Configuration
+  redis:
+    host: localhost
+    port: 6379
+    database: 0
+    timeout: 2000ms
+    lettuce:
+      pool:
+        max-active: 8
+        max-idle: 8
+        min-idle: 0
+        max-wait: -1ms
+    # Connection pool settings for better performance
+    jedis:
+      pool:
+        max-active: 8
+        max-idle: 8
+        min-idle: 0
+        max-wait: -1ms
+
+# Cache Configuration
+cache:
+  product:
+    ttl: 7200  # 2 hours for individual products (relatively static)
+  product-list:
+    ttl: 1800  # 30 minutes for product lists (more dynamic due to stock changes)
+
+# Server Configuration
+server:
+  port: 8081
+
+# Reservation Configuration
+reservation:
+  ttl-seconds: 3000 # 50 minutes
+
+# Sweeper Configuration
+sweeper:
+  cron: "0 */1 * * * *" # every 1 minute
+
+# gRPC Configuration
+grpc:
+  server:
+    port: 9091
+
+# Management Endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus, info, cache
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# Logging Configuration
+logging:
+  level:
+    com.nuclei.product: DEBUG
+    org.springframework.cache: DEBUG
+    org.springframework.data.redis: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
