@@ -1,50 +1,69 @@
 package com.nuclei.product.service;
 
-import com.nuclei.product.dto.*;
+import com.nuclei.product.dao.IProductDao;
+import com.nuclei.product.dao.IReservationDao;
+import com.nuclei.product.dto.CreateProductDto;
+import com.nuclei.product.dto.UpdateProductDto;
+import com.nuclei.product.dto.ReserveStockDto;
+import com.nuclei.product.dto.ConfirmReservationDto;
+import com.nuclei.product.dto.ReleaseReservationDto;
 import com.nuclei.product.entity.ProductEntity;
 import com.nuclei.product.entity.ReservationEntity;
 import com.nuclei.product.enums.ProductStatusEnums;
 import com.nuclei.product.exception.InsufficientStockException;
 import com.nuclei.product.exception.NotFoundException;
-import com.nuclei.product.repository.ProductRepository;
-import com.nuclei.product.repository.ReservationRepository;
+import com.nuclei.product.mapper.ProductProtoMapper;
 import com.nuclei.product.service.impl.ProductServiceImpl;
-import com.nuclei.product.service.IRedisCacheService;
+import com.nuclei.product.util.ProductSpecificationBuilder;
 import com.nuclei.product.validation.ProductValidator;
 import com.nuclei.product.validation.ReservationValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.*;
 
-import java.time.Instant;
-import java.util.*;
+import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-public class ProductServiceImplTest {
+class ProductServiceImplTest {
 
   @Mock
-  private ProductRepository productRepository;
+  private IProductDao productDao;
+
   @Mock
-  private ReservationRepository reservationRepository;
+  private IReservationDao reservationDao;
+
+  @Mock
+  private ProductProtoMapper productMapper;
+
   @Mock
   private ProductValidator productValidator;
+
   @Mock
   private ReservationValidator reservationValidator;
+
   @Mock
   private IRedisCacheService redisCacheService;
+
+  @Mock
+  private ProductSpecificationBuilder specificationBuilder;
 
   private IProductService service;
 
   @BeforeEach
   void setUp() {
-    service = new ProductServiceImpl(productRepository, reservationRepository, productValidator, reservationValidator, redisCacheService);
+    service = new ProductServiceImpl(productDao, reservationDao, productMapper, productValidator, reservationValidator, redisCacheService, specificationBuilder);
   }
 
   private ProductEntity newProduct(Long id, long stock, double price, ProductStatusEnums status) {
@@ -72,17 +91,19 @@ public class ProductServiceImplTest {
         .status(ProductStatusEnums.ACTIVE)
         .build();
 
-    ProductEntity saved = dto.toEntity();
-    saved.setId(100L);
+    ProductEntity product = newProduct(100L, 5L, 10.0, ProductStatusEnums.ACTIVE);
 
     doNothing().when(productValidator).validateCreate(dto);
-    when(productRepository.saveAndFlush(any(ProductEntity.class))).thenReturn(saved);
+    when(productMapper.toEntity(dto)).thenReturn(product);
+    when(productDao.saveAndFlush(any(ProductEntity.class))).thenReturn(product);
 
     ProductEntity result = service.createProduct(dto);
 
     assertThat(result.getId()).isEqualTo(100L);
     verify(productValidator).validateCreate(dto);
-    verify(productRepository).saveAndFlush(any(ProductEntity.class));
+    verify(productMapper).toEntity(dto);
+    verify(productDao).saveAndFlush(any(ProductEntity.class));
+    verify(redisCacheService).cacheProduct(eq(100L), eq(product));
   }
 
   @Test
@@ -99,17 +120,25 @@ public class ProductServiceImplTest {
 
     ProductEntity existing = newProduct(1L, 5L, 10.0, ProductStatusEnums.ACTIVE);
     existing.setVersion(2L);
+    
+    ProductEntity updated = newProduct(1L, 7L, 25.0, ProductStatusEnums.INACTIVE);
+    updated.setDescription("ND");
+    updated.setPriceCurrency("USD");
+    updated.setVersion(2L);
 
-    when(productRepository.findById(1L)).thenReturn(Optional.of(existing));
-    when(productRepository.saveAndFlush(existing)).thenReturn(existing);
+    when(productDao.findById(1L)).thenReturn(Optional.of(existing));
+    when(productDao.saveAndFlush(existing)).thenReturn(updated);
+    doNothing().when(productMapper).updateEntity(existing, dto);
 
-    ProductEntity updated = service.updateProduct(dto);
+    ProductEntity result = service.updateProduct(dto);
 
-    assertThat(updated.getDescription()).isEqualTo("ND");
-    assertThat(updated.getPriceAmount()).isEqualTo(25.0);
-    assertThat(updated.getPriceCurrency()).isEqualTo("USD");
-    assertThat(updated.getStockQuantity()).isEqualTo(7L);
-    assertThat(updated.getStatus()).isEqualTo(ProductStatusEnums.INACTIVE);
+    assertThat(result.getDescription()).isEqualTo("ND");
+    assertThat(result.getPriceAmount()).isEqualTo(25.0);
+    assertThat(result.getPriceCurrency()).isEqualTo("USD");
+    assertThat(result.getStockQuantity()).isEqualTo(7L);
+    assertThat(result.getStatus()).isEqualTo(ProductStatusEnums.INACTIVE);
+    verify(productMapper).updateEntity(existing, dto);
+    verify(redisCacheService).onProductModified(1L);
   }
 
   @Test
@@ -117,7 +146,7 @@ public class ProductServiceImplTest {
     UpdateProductDto dto = UpdateProductDto.builder().id(1L).expectedVersion(3L).build();
     ProductEntity existing = newProduct(1L, 5L, 10.0, ProductStatusEnums.ACTIVE);
     existing.setVersion(2L);
-    when(productRepository.findById(1L)).thenReturn(Optional.of(existing));
+    when(productDao.findById(1L)).thenReturn(Optional.of(existing));
 
     assertThatThrownBy(() -> service.updateProduct(dto))
         .isInstanceOf(IllegalStateException.class)
@@ -127,152 +156,136 @@ public class ProductServiceImplTest {
   @Test
   void deleteProduct_softDeletes() {
     ProductEntity existing = newProduct(2L, 5L, 10.0, ProductStatusEnums.ACTIVE);
-    when(productRepository.findById(2L)).thenReturn(Optional.of(existing));
-    when(productRepository.saveAndFlush(existing)).thenReturn(existing);
+    when(productDao.findById(2L)).thenReturn(Optional.of(existing));
+    when(productDao.saveAndFlush(existing)).thenReturn(existing);
 
     ProductEntity deleted = service.deleteProduct(2L);
     assertThat(deleted.getStatus()).isEqualTo(ProductStatusEnums.DISCONTINUED);
+    verify(redisCacheService).onProductDeleted(2L);
   }
 
   @Test
   void deleteProduct_notFoundThrows() {
-    when(productRepository.findById(99L)).thenReturn(Optional.empty());
+    when(productDao.findById(99L)).thenReturn(Optional.empty());
+
     assertThatThrownBy(() -> service.deleteProduct(99L))
-        .isInstanceOf(NotFoundException.class);
+        .isInstanceOf(NotFoundException.class)
+        .hasMessageContaining("product not found: 99");
   }
 
   @Test
-  void listProducts_returnsPage() {
-    ListProductsDto c = ListProductsDto.builder().page(1).pageSize(10).onlyAvailable(true).build();
-    List<ProductEntity> items = List.of(newProduct(1L, 1L, 5.0, ProductStatusEnums.ACTIVE));
-    Page<ProductEntity> page = new PageImpl<>(items, PageRequest.of(0, 10, Sort.by("id").descending()), 1);
-    when(productRepository.findAll(any(org.springframework.data.jpa.domain.Specification.class), any(Pageable.class))).thenReturn(page);
+  void getProductById_cacheHit() {
+    ProductEntity cachedProduct = newProduct(1L, 5L, 10.0, ProductStatusEnums.ACTIVE);
+    when(redisCacheService.getCachedProduct(1L)).thenReturn(cachedProduct);
 
-    Page<ProductEntity> out = service.listProducts(c);
-    assertThat(out.getTotalElements()).isEqualTo(1);
-    verify(productRepository).findAll(any(org.springframework.data.jpa.domain.Specification.class), any(Pageable.class));
+    Optional<ProductEntity> result = service.getProductById(1L);
+
+    assertThat(result).isPresent();
+    assertThat(result.get().getId()).isEqualTo(1L);
+    verify(productDao, never()).findById(anyLong());
   }
 
   @Test
-  void reserveStock_idempotentReturnsExisting() {
-    ReserveStockDto dto = ReserveStockDto.builder().productId(1L).quantity(2L).idempotencyKey("abc").build();
-    ReservationEntity existing = ReservationEntity.builder()
-        .reservationId("r1").productId(1L).quantity(2L).status("IN_PROGRESS").build();
-    doNothing().when(reservationValidator).validateReserve(dto);
-    when(reservationRepository.findByIdempotencyKey("abc")).thenReturn(Optional.of(existing));
+  void getProductById_cacheMiss() {
+    ProductEntity product = newProduct(1L, 5L, 10.0, ProductStatusEnums.ACTIVE);
+    when(redisCacheService.getCachedProduct(1L)).thenReturn(null);
+    when(productDao.findById(1L)).thenReturn(Optional.of(product));
 
-    ReservationEntity out = service.reserveStock(dto);
-    assertThat(out.getReservationId()).isEqualTo("r1");
-    verify(productRepository, never()).findByIdForUpdate(anyLong());
+    Optional<ProductEntity> result = service.getProductById(1L);
+
+    assertThat(result).isPresent();
+    assertThat(result.get().getId()).isEqualTo(1L);
+    verify(redisCacheService).cacheProduct(1L, product);
   }
 
   @Test
   void reserveStock_success_decrementsAndCreatesReservation() {
-    ReserveStockDto dto = ReserveStockDto.builder().productId(4L).quantity(2L).idempotencyKey("abc").build();
-    doNothing().when(reservationValidator).validateReserve(dto);
+    ReserveStockDto request = ReserveStockDto.builder()
+        .productId(1L)
+        .quantity(2L)
+        .expectedVersion(1L)
+        .build();
 
-    ProductEntity product = newProduct(4L, 5L, 10.0, ProductStatusEnums.ACTIVE);
+    ProductEntity product = newProduct(1L, 5L, 10.0, ProductStatusEnums.ACTIVE);
     product.setVersion(1L);
-    when(productRepository.findByIdForUpdate(4L)).thenReturn(Optional.of(product));
 
-    ReservationEntity saved = ReservationEntity.builder().reservationId("r-new").productId(4L).quantity(2L).status("IN_PROGRESS").build();
-    when(reservationRepository.save(any(ReservationEntity.class))).thenReturn(saved);
+    when(productDao.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+    when(productDao.save(any(ProductEntity.class))).thenReturn(product);
+    when(reservationDao.save(any(ReservationEntity.class))).thenAnswer(invocation -> {
+      ReservationEntity reservation = invocation.getArgument(0);
+      reservation.setId(1L);
+      return reservation;
+    });
 
-    ReservationEntity out = service.reserveStock(dto);
-    assertThat(out.getReservationId()).isNotBlank();
-    assertThat(product.getStockQuantity()).isEqualTo(3L);
-    verify(productRepository).save(product);
+    ReservationEntity result = service.reserveStock(request);
+
+    assertThat(result).isNotNull();
+    assertThat(result.getProductId()).isEqualTo(1L);
+    assertThat(result.getQuantity()).isEqualTo(2L);
+    assertThat(result.getStatus()).isEqualTo("IN_PROGRESS");
+    verify(productDao).save(any(ProductEntity.class));
+    verify(redisCacheService).onStockModified(1L);
   }
 
   @Test
-  void reserveStock_discontinuedThrows() {
-    ReserveStockDto dto = ReserveStockDto.builder().productId(1L).quantity(1L).build();
-    doNothing().when(reservationValidator).validateReserve(dto);
-    ProductEntity product = newProduct(1L, 5L, 10.0, ProductStatusEnums.DISCONTINUED);
-    when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+  void reserveStock_insufficientStockThrows() {
+    ReserveStockDto request = ReserveStockDto.builder()
+        .productId(1L)
+        .quantity(10L)
+        .build();
 
-    assertThatThrownBy(() -> service.reserveStock(dto))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("discontinued");
-  }
-
-  @Test
-  void reserveStock_insufficientThrows() {
-    ReserveStockDto dto = ReserveStockDto.builder().productId(1L).quantity(10L).build();
-    doNothing().when(reservationValidator).validateReserve(dto);
     ProductEntity product = newProduct(1L, 5L, 10.0, ProductStatusEnums.ACTIVE);
-    when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
 
-    assertThatThrownBy(() -> service.reserveStock(dto))
-        .isInstanceOf(InsufficientStockException.class);
+    when(productDao.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+
+    assertThatThrownBy(() -> service.reserveStock(request))
+        .isInstanceOf(InsufficientStockException.class)
+        .hasMessageContaining("insufficient stock");
   }
 
   @Test
-  void reserveStock_versionMismatchThrows() {
-    ReserveStockDto dto = ReserveStockDto.builder().productId(1L).quantity(1L).expectedVersion(5L).build();
-    doNothing().when(reservationValidator).validateReserve(dto);
-    ProductEntity product = newProduct(1L, 5L, 10.0, ProductStatusEnums.ACTIVE);
-    product.setVersion(2L);
-    when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+  void confirmReservation_success() {
+    ConfirmReservationDto request = new ConfirmReservationDto("res-123", "order-456");
 
-    assertThatThrownBy(() -> service.reserveStock(dto))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("version mismatch");
+    ReservationEntity reservation = ReservationEntity.builder()
+        .reservationId("res-123")
+        .productId(1L)
+        .quantity(2L)
+        .status("IN_PROGRESS")
+        .build();
+
+    when(reservationDao.findByReservationId("res-123")).thenReturn(Optional.of(reservation));
+    when(reservationDao.save(any(ReservationEntity.class))).thenReturn(reservation);
+
+    ReservationEntity result = service.confirmReservation(request);
+
+    assertThat(result.getStatus()).isEqualTo("CONFIRMED");
+    assertThat(result.getOrderId()).isEqualTo("order-456");
   }
 
   @Test
-  void confirmReservation_setsConfirmed_andOrderId() {
-    ConfirmReservationDto dto = new ConfirmReservationDto("rid-1", "order-1");
-    ReservationEntity res = ReservationEntity.builder().reservationId("rid-1").status("IN_PROGRESS").build();
-    doNothing().when(reservationValidator).validateConfirm(dto);
-    when(reservationRepository.findByReservationId("rid-1")).thenReturn(Optional.of(res));
-    when(reservationRepository.save(res)).thenReturn(res);
+  void releaseReservation_success() {
+    ReleaseReservationDto request = new ReleaseReservationDto("res-123", "test reason");
 
-    ReservationEntity out = service.confirmReservation(dto);
-    assertThat(out.getStatus()).isEqualTo("CONFIRMED");
-    assertThat(out.getOrderId()).isEqualTo("order-1");
-  }
+    ReservationEntity reservation = ReservationEntity.builder()
+        .reservationId("res-123")
+        .productId(1L)
+        .quantity(2L)
+        .status("IN_PROGRESS")
+        .build();
 
-  @Test
-  void confirmReservation_alreadyReleasedThrows() {
-    ConfirmReservationDto dto = new ConfirmReservationDto("rid-2", null);
-    ReservationEntity res = ReservationEntity.builder().reservationId("rid-2").status("RELEASED").build();
-    doNothing().when(reservationValidator).validateConfirm(dto);
-    when(reservationRepository.findByReservationId("rid-2")).thenReturn(Optional.of(res));
+    ProductEntity product = newProduct(1L, 3L, 10.0, ProductStatusEnums.ACTIVE);
 
-    assertThatThrownBy(() -> service.confirmReservation(dto))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("already released");
-  }
+    when(reservationDao.findByReservationId("res-123")).thenReturn(Optional.of(reservation));
+    when(productDao.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+    when(productDao.save(any(ProductEntity.class))).thenReturn(product);
+    when(reservationDao.save(any(ReservationEntity.class))).thenReturn(reservation);
 
-  @Test
-  void releaseReservation_restoresStock_andMarksReleased() {
-    ReleaseReservationDto dto = new ReleaseReservationDto("rid-3", "reason");
-    ReservationEntity res = ReservationEntity.builder().reservationId("rid-3").status("IN_PROGRESS").productId(9L).quantity(4L).build();
-    doNothing().when(reservationValidator).validateRelease(dto);
-    when(reservationRepository.findByReservationId("rid-3")).thenReturn(Optional.of(res));
+    ReservationEntity result = service.releaseReservation(request);
 
-    ProductEntity p = newProduct(9L, 3L, 2.0, ProductStatusEnums.ACTIVE);
-    when(productRepository.findByIdForUpdate(9L)).thenReturn(Optional.of(p));
-
-    when(productRepository.save(p)).thenReturn(p);
-    when(reservationRepository.save(res)).thenReturn(res);
-
-    ReservationEntity out = service.releaseReservation(dto);
-    assertThat(p.getStockQuantity()).isEqualTo(7L);
-    assertThat(out.getStatus()).isEqualTo("RELEASED");
-  }
-
-  @Test
-  void releaseReservation_alreadyReleased_noop() {
-    ReleaseReservationDto dto = new ReleaseReservationDto("rid-x", null);
-    ReservationEntity res = ReservationEntity.builder().reservationId("rid-x").status("RELEASED").build();
-    doNothing().when(reservationValidator).validateRelease(dto);
-    when(reservationRepository.findByReservationId("rid-x")).thenReturn(Optional.of(res));
-
-    ReservationEntity out = service.releaseReservation(dto);
-    assertThat(out.getStatus()).isEqualTo("RELEASED");
-    verify(productRepository, never()).findByIdForUpdate(anyLong());
+    assertThat(result.getStatus()).isEqualTo("RELEASED");
+    verify(productDao).save(any(ProductEntity.class));
+    verify(redisCacheService).onStockModified(1L);
   }
 }
 

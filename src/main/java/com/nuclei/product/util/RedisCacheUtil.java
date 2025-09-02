@@ -1,7 +1,5 @@
 package com.nuclei.product.util;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nuclei.product.entity.ProductEntity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -11,140 +9,130 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
-import java.util.*;
-import java.util.concurrent.TimeUnit;
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
+/**
+ * Redis cache utility for map-based serialization
+ */
 @Slf4j
 @Component
 public class RedisCacheUtil {
 
-    private static final String PRODUCT_PREFIX = "product:";
-    private static final String PRODUCT_LIST_PREFIX = "product-list:";
-    private static final String RESERVATION_PREFIX = "reservation:";
-
     private final RedisTemplate<String, Object> redisTemplate;
-    private final ObjectMapper objectMapper;
 
-    public RedisCacheUtil(RedisTemplate<String, Object> redisTemplate, ObjectMapper objectMapper) {
+    // Cache key prefixes
+    private static final String PRODUCT_PREFIX = "product";
+    private static final String PRODUCT_LIST_PREFIX = "product-list";
+    private static final String RESERVATION_PREFIX = "reservation";
+
+    public RedisCacheUtil(final RedisTemplate<String, Object> redisTemplate) {
+
         this.redisTemplate = redisTemplate;
-        this.objectMapper = objectMapper;
     }
 
     /**
-     * Cache a product entity as a simple map
+     * Cache a product entity
      */
-    public void cacheProduct(Long productId, ProductEntity product) {
-        if (product == null) return;
-        
+    public void cacheProduct(final Long productId, final ProductEntity product) {
+        final String key = generateProductKey(productId);
         try {
-            String key = PRODUCT_PREFIX + productId;
-            Map<String, Object> productMap = convertProductToMap(product);
+            final Map<String, Object> productMap = convertProductToMap(product);
             redisTemplate.opsForValue().set(key, productMap);
-            log.debug("Successfully cached product as map with key: {}", key);
-        } catch (Exception e) {
-            log.error("Failed to cache product with id: {}", productId, e);
+            log.debug("Product cached successfully with key: {}", key);
+        } catch (final Exception e) {
+            log.error("Failed to cache product with key: {}", key, e);
+            throw e;
         }
     }
 
     /**
-     * Get cached product entity from map
+     * Get cached product entity
      */
-    public Optional<ProductEntity> getCachedProduct(Long productId) {
+    public ProductEntity getCachedProduct(final Long productId) {
+        final String key = generateProductKey(productId);
         try {
-            String key = PRODUCT_PREFIX + productId;
-            Object cached = redisTemplate.opsForValue().get(key);
-            if (cached != null) {
-                log.debug("Cache hit for product key: {}", key);
-                
-                // Check if it's already a ProductEntity (from old cache format)
-                if (cached instanceof ProductEntity) {
-                    log.debug("Found cached ProductEntity directly, returning it");
-                    return Optional.of((ProductEntity) cached);
-                }
-                
-                // Check if it's a Map (from new cache format)
-                if (cached instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> productMap = (Map<String, Object>) cached;
-                    ProductEntity product = convertMapToProduct(productMap);
-                    return Optional.of(product);
-                }
-                
-                log.warn("Unexpected cached object type: {}", cached.getClass().getName());
-                return Optional.empty();
+            final Object cached = redisTemplate.opsForValue().get(key);
+            if (cached == null) {
+                return null;
             }
-            log.debug("Cache miss for product key: {}", key);
-            return Optional.empty();
-        } catch (Exception e) {
-            log.error("Failed to get cached product with id: {}", productId, e);
-            return Optional.empty();
+
+            // Handle both old (direct ProductEntity) and new (map-based) cache formats
+            if (cached instanceof ProductEntity) {
+                return (ProductEntity) cached;
+            } else if (cached instanceof Map) {
+                @SuppressWarnings("unchecked")
+                final Map<String, Object> productMap = (Map<String, Object>) cached;
+                return convertMapToProduct(productMap);
+            } else {
+                log.warn("Unexpected cache format for product: {}", productId);
+                return null;
+            }
+        } catch (final Exception e) {
+            log.error("Failed to get cached product with key: {}", key, e);
+            return null;
         }
     }
 
     /**
-     * Cache a product page as a simple map structure
+     * Cache a product page
      */
-    public void cacheProductList(String cacheKey, Page<ProductEntity> productPage) {
-        if (productPage == null) return;
-        
+    public void cacheProductList(final String cacheKey, final Page<ProductEntity> productPage) {
+        final String key = generateProductListKey(cacheKey);
         try {
-            String key = PRODUCT_LIST_PREFIX + cacheKey;
-            Map<String, Object> pageMap = convertPageToMap(productPage);
+            final Map<String, Object> pageMap = convertPageToMap(productPage);
             redisTemplate.opsForValue().set(key, pageMap);
-            log.debug("Successfully cached product list as map with key: {}", key);
-        } catch (Exception e) {
-            log.error("Failed to cache product list with key: {}", cacheKey, e);
+            log.debug("Product list cached successfully with key: {}", key);
+        } catch (final Exception e) {
+            log.error("Failed to cache product list with key: {}", key, e);
+            throw e;
         }
     }
 
     /**
-     * Get cached product page from map
+     * Get cached product page
      */
-    public Optional<Page<ProductEntity>> getCachedProductList(String cacheKey) {
+    public Page<ProductEntity> getCachedProductList(final String cacheKey) {
+        final String key = generateProductListKey(cacheKey);
         try {
-            String key = PRODUCT_LIST_PREFIX + cacheKey;
-            Object cached = redisTemplate.opsForValue().get(key);
-            if (cached != null) {
-                log.debug("Cache hit for product list key: {}", key);
-                
-                // Check if it's already a Page (from old cache format)
-                if (cached instanceof Page) {
-                    @SuppressWarnings("unchecked")
-                    Page<ProductEntity> page = (Page<ProductEntity>) cached;
-                    log.debug("Found cached Page directly, returning it");
-                    return Optional.of(page);
-                }
-                
-                // Check if it's a Map (from new cache format)
-                if (cached instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> pageMap = (Map<String, Object>) cached;
-                    Page<ProductEntity> productPage = convertMapToPage(pageMap);
-                    return Optional.of(productPage);
-                }
-                
-                log.warn("Unexpected cached object type: {}", cached.getClass().getName());
-                return Optional.empty();
+            final Object cached = redisTemplate.opsForValue().get(key);
+            if (cached == null) {
+                return null;
             }
-            log.debug("Cache miss for product list key: {}", key);
-            return Optional.empty();
-        } catch (Exception e) {
-            log.error("Failed to get cached product list with key: {}", cacheKey, e);
-            return Optional.empty();
+
+            // Handle both old (direct Page) and new (map-based) cache formats
+            if (cached instanceof Page) {
+                @SuppressWarnings("unchecked")
+                final Page<ProductEntity> page = (Page<ProductEntity>) cached;
+                return page;
+            } else if (cached instanceof Map) {
+                @SuppressWarnings("unchecked")
+                final Map<String, Object> pageMap = (Map<String, Object>) cached;
+                return convertMapToPage(pageMap);
+            } else {
+                log.warn("Unexpected cache format for product list: {}", cacheKey);
+                return null;
+            }
+        } catch (final Exception e) {
+            log.error("Failed to get cached product list with key: {}", key, e);
+            return null;
         }
     }
 
     /**
-     * Invalidate specific product cache
+     * Invalidate product cache
      */
-    public void invalidateProduct(Long productId) {
+    public void invalidateProduct(final Long productId) {
+        final String key = generateProductKey(productId);
         try {
-            String key = PRODUCT_PREFIX + productId;
             redisTemplate.delete(key);
-            log.debug("Invalidated product cache for id: {}", productId);
-        } catch (Exception e) {
-            log.error("Failed to invalidate product cache for id: {}", productId, e);
+            log.debug("Product cache invalidated: {}", key);
+        } catch (final Exception e) {
+            log.error("Failed to invalidate product cache: {}", key, e);
         }
     }
 
@@ -153,13 +141,14 @@ public class RedisCacheUtil {
      */
     public void invalidateAllProductLists() {
         try {
-            Set<String> keys = redisTemplate.keys(PRODUCT_LIST_PREFIX + "*");
+            final String pattern = PRODUCT_LIST_PREFIX + ":*";
+            final Set<String> keys = redisTemplate.keys(pattern);
             if (keys != null && !keys.isEmpty()) {
                 redisTemplate.delete(keys);
                 log.debug("Invalidated {} product list caches", keys.size());
             }
-        } catch (Exception e) {
-            log.error("Failed to invalidate product list caches", e);
+        } catch (final Exception e) {
+            log.error("Failed to invalidate all product list caches", e);
         }
     }
 
@@ -168,77 +157,87 @@ public class RedisCacheUtil {
      */
     public void invalidateAllProducts() {
         try {
-            Set<String> keys = redisTemplate.keys(PRODUCT_PREFIX + "*");
+            final String pattern = PRODUCT_PREFIX + ":*";
+            final Set<String> keys = redisTemplate.keys(pattern);
             if (keys != null && !keys.isEmpty()) {
                 redisTemplate.delete(keys);
                 log.debug("Invalidated {} product caches", keys.size());
             }
-        } catch (Exception e) {
-            log.error("Failed to invalidate product caches", e);
+        } catch (final Exception e) {
+            log.error("Failed to invalidate all product caches", e);
         }
     }
 
     /**
-     * Check if a key exists
+     * Check if key exists
      */
-    public boolean exists(String key) {
+    public boolean exists(final String key) {
         try {
             return Boolean.TRUE.equals(redisTemplate.hasKey(key));
-        } catch (Exception e) {
+        } catch (final Exception e) {
             log.error("Failed to check key existence: {}", key, e);
             return false;
         }
     }
 
     /**
-     * Set TTL for a key
+     * Set expiration for a key
      */
-    public void setExpire(String key, long seconds) {
+    public void setExpire(final String key, final Duration duration) {
         try {
-            redisTemplate.expire(key, seconds, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            log.error("Failed to set TTL for key: {}", key, e);
+            redisTemplate.expire(key, duration);
+        } catch (final Exception e) {
+            log.error("Failed to set expiration for key: {}", key, e);
         }
     }
 
     /**
-     * Get TTL for a key
+     * Get expiration for a key
      */
-    public long getExpire(String key) {
+    public Duration getExpire(final String key) {
         try {
-            Long ttl = redisTemplate.getExpire(key);
-            return ttl != null ? ttl : -1;
-        } catch (Exception e) {
-            log.error("Failed to get TTL for key: {}", key, e);
-            return -1;
+            final Long ttl = redisTemplate.getExpire(key);
+            return ttl != null ? Duration.ofSeconds(ttl) : Duration.ZERO;
+        } catch (final Exception e) {
+            log.error("Failed to get expiration for key: {}", key, e);
+            return Duration.ZERO;
         }
     }
 
     /**
-     * Generate cache key for product list
+     * Generate product list cache key
      */
-    public String generateProductListCacheKey(int page, int size, boolean availableOnly, Map<String, Object> filters) {
-        StringBuilder keyBuilder = new StringBuilder();
-        keyBuilder.append("page:").append(page);
-        keyBuilder.append(":size:").append(size);
-        keyBuilder.append(":available:").append(availableOnly);
+    public String generateProductListCacheKey(final int page, final int size, final boolean availableOnly, final Map<String, Object> filters) {
+        final StringBuilder keyBuilder = new StringBuilder();
+        keyBuilder.append("page:").append(page)
+                 .append(":size:").append(size)
+                 .append(":available:").append(availableOnly);
         
         if (filters != null && !filters.isEmpty()) {
-            keyBuilder.append(":filters:");
-            filters.entrySet().stream()
-                .filter(entry -> entry.getValue() != null)
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> keyBuilder.append(entry.getKey()).append("=").append(entry.getValue()).append(":"));
+            filters.forEach((filterKey, filterValue) -> 
+                keyBuilder.append(":").append(filterKey).append(":").append(filterValue));
         }
         
         return keyBuilder.toString();
     }
 
+    // Private helper methods
+
+    private String generateProductKey(final Long productId) {
+
+        return PRODUCT_PREFIX + ":" + productId;
+    }
+
+    private String generateProductListKey(final String cacheKey) {
+
+        return PRODUCT_LIST_PREFIX + ":" + cacheKey;
+    }
+
     /**
      * Convert ProductEntity to simple Map for caching
      */
-    private Map<String, Object> convertProductToMap(ProductEntity product) {
-        Map<String, Object> map = new HashMap<>();
+    private Map<String, Object> convertProductToMap(final ProductEntity product) {
+        final Map<String, Object> map = new HashMap<>();
         map.put("id", product.getId());
         map.put("name", product.getName());
         map.put("description", product.getDescription());
@@ -248,11 +247,8 @@ public class RedisCacheUtil {
         map.put("status", product.getStatus() != null ? product.getStatus().name() : "ACTIVE");
         map.put("version", product.getVersion());
         map.put("metadata", product.getMetadata());
-        
-        // Store the actual timestamps from the entity
-        // These should always be set by Hibernate @CreationTimestamp and @UpdateTimestamp
-        map.put("createdAt", product.getCreatedAt().toEpochMilli());
-        map.put("updatedAt", product.getUpdatedAt().toEpochMilli());
+        map.put("createdAt", product.getCreatedAt() != null ? product.getCreatedAt().toEpochMilli() : null);
+        map.put("updatedAt", product.getUpdatedAt() != null ? product.getUpdatedAt().toEpochMilli() : null);
         
         return map;
     }
@@ -260,27 +256,27 @@ public class RedisCacheUtil {
     /**
      * Convert Map back to ProductEntity
      */
-    private ProductEntity convertMapToProduct(Map<String, Object> map) {
-        ProductEntity product = new ProductEntity();
+    private ProductEntity convertMapToProduct(final Map<String, Object> map) {
+        final ProductEntity product = new ProductEntity();
         product.setId((Long) map.get("id"));
         product.setName((String) map.get("name"));
         product.setDescription((String) map.get("description"));
         product.setPriceAmount((Double) map.get("priceAmount"));
         product.setPriceCurrency((String) map.get("priceCurrency"));
         product.setStockQuantity((Long) map.get("stockQuantity"));
-        product.setStatus(com.nuclei.product.enums.ProductStatusEnums.valueOf((String) map.get("status")));
+        final String statusStr = (String) map.get("status");
+        product.setStatus(statusStr != null ? com.nuclei.product.enums.ProductStatusEnums.valueOf(statusStr) : com.nuclei.product.enums.ProductStatusEnums.ACTIVE);
         product.setVersion((Long) map.get("version"));
         
         @SuppressWarnings("unchecked")
-        Map<String, String> metadata = (Map<String, String>) map.get("metadata");
+        final Map<String, String> metadata = (Map<String, String>) map.get("metadata");
         product.setMetadata(metadata);
-        
-        // Convert timestamps back from milliseconds to Instant
-        Long createdAtMillis = (Long) map.get("createdAt");
-        Long updatedAtMillis = (Long) map.get("updatedAt");
-        
-        product.setCreatedAt(java.time.Instant.ofEpochMilli(createdAtMillis));
-        product.setUpdatedAt(java.time.Instant.ofEpochMilli(updatedAtMillis));
+
+        final Long createdAtMillis = (Long) map.get("createdAt");
+        final Long updatedAtMillis = (Long) map.get("updatedAt");
+
+        product.setCreatedAt(createdAtMillis != null ? java.time.Instant.ofEpochMilli(createdAtMillis) : null);
+        product.setUpdatedAt(updatedAtMillis != null ? java.time.Instant.ofEpochMilli(updatedAtMillis) : null);
         
         return product;
     }
@@ -288,8 +284,8 @@ public class RedisCacheUtil {
     /**
      * Convert Page<ProductEntity> to simple Map for caching
      */
-    private Map<String, Object> convertPageToMap(Page<ProductEntity> page) {
-        Map<String, Object> map = new HashMap<>();
+    private Map<String, Object> convertPageToMap(final Page<ProductEntity> page) {
+        final Map<String, Object> map = new HashMap<>();
         map.put("content", page.getContent().stream()
             .map(this::convertProductToMap)
             .collect(Collectors.toList()));
@@ -308,15 +304,15 @@ public class RedisCacheUtil {
     /**
      * Convert Map back to Page<ProductEntity>
      */
-    private Page<ProductEntity> convertMapToPage(Map<String, Object> map) {
+    private Page<ProductEntity> convertMapToPage(final Map<String, Object> map) {
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> contentMaps = (List<Map<String, Object>>) map.get("content");
-        List<ProductEntity> content = contentMaps.stream()
+        final List<Map<String, Object>> contentMaps = (List<Map<String, Object>>) map.get("content");
+        final List<ProductEntity> content = contentMaps.stream()
             .map(this::convertMapToProduct)
             .collect(Collectors.toList());
         
-        Pageable pageable = convertMapToPageable((Map<String, Object>) map.get("pageable"));
-        Long totalElements = (Long) map.get("totalElements");
+        final Pageable pageable = convertMapToPageable((Map<String, Object>) map.get("pageable"));
+        final Long totalElements = (Long) map.get("totalElements");
         
         return new PageImpl<>(content, pageable, totalElements);
     }
@@ -324,22 +320,20 @@ public class RedisCacheUtil {
     /**
      * Convert Pageable to simple Map
      */
-    private Map<String, Object> convertPageableToMap(Pageable pageable) {
-        Map<String, Object> map = new HashMap<>();
+    private Map<String, Object> convertPageableToMap(final Pageable pageable) {
+        final Map<String, Object> map = new HashMap<>();
         map.put("pageNumber", pageable.getPageNumber());
         map.put("pageSize", pageable.getPageSize());
-        map.put("offset", pageable.getOffset());
-        map.put("paged", pageable.isPaged());
-        map.put("unpaged", pageable.isUnpaged());
+        map.put("sort", pageable.getSort() != null ? pageable.getSort().toString() : "");
         return map;
     }
 
     /**
      * Convert Map back to Pageable
      */
-    private Pageable convertMapToPageable(Map<String, Object> map) {
-        int pageNumber = (Integer) map.get("pageNumber");
-        int pageSize = (Integer) map.get("pageSize");
+    private Pageable convertMapToPageable(final Map<String, Object> map) {
+        final Integer pageNumber = (Integer) map.get("pageNumber");
+        final Integer pageSize = (Integer) map.get("pageSize");
         return PageRequest.of(pageNumber, pageSize);
     }
 }

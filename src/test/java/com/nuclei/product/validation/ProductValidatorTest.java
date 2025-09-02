@@ -4,7 +4,7 @@ import com.nuclei.product.dto.CreateProductDto;
 import com.nuclei.product.dto.UpdateProductDto;
 import org.junit.jupiter.api.Test;
 
-import static org.assertj.core.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class ProductValidatorTest {
 

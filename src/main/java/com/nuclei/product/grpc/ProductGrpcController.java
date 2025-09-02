@@ -1,6 +1,11 @@
 package com.nuclei.product.grpc;
 
-import com.nuclei.product.dto.*;
+import com.nuclei.product.dto.CreateProductDto;
+import com.nuclei.product.dto.UpdateProductDto;
+import com.nuclei.product.dto.ListProductsDto;
+import com.nuclei.product.dto.ReserveStockDto;
+import com.nuclei.product.dto.ConfirmReservationDto;
+import com.nuclei.product.dto.ReleaseReservationDto;
 import com.nuclei.product.entity.ProductEntity;
 import com.nuclei.product.entity.ReservationEntity;
 import com.nuclei.product.exception.NotFoundException;
@@ -10,7 +15,6 @@ import com.nuclei.product.v1.messages.*;
 import com.nuclei.product.v1.services.ProductServiceGrpc;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
-
 import net.devh.boot.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -33,11 +37,9 @@ public class ProductGrpcController extends ProductServiceGrpc.ProductServiceImpl
                             final StreamObserver<CreateProductResponse> responseObserver)
   {
     try {
-      final CreateProductDto command = mapper.toCreateCommand(req);
-      final ProductEntity saved = productService.createProduct(command);
-      final Product proto = mapper.toProto(saved);
-      responseObserver.
-          onNext(CreateProductResponse.newBuilder().setProduct(proto).build());
+      final CreateProductDto request = mapper.toCreateReq(req);
+      final ProductEntity saved = productService.createProduct(request);
+      responseObserver.onNext(mapper.toCreateProductResponse(saved));
       responseObserver.onCompleted();
     } catch (IllegalArgumentException e) {
       responseObserver.
@@ -56,8 +58,7 @@ public class ProductGrpcController extends ProductServiceGrpc.ProductServiceImpl
       final long id = Long.parseLong(req.getId());
       final ProductEntity entity = productService.getProductById(id)
           .orElseThrow(() -> new NotFoundException("product not found"));
-      responseObserver.
-          onNext(GetProductResponse.newBuilder().setProduct(mapper.toProto(entity)).build());
+      responseObserver.onNext(mapper.toGetProductResponse(entity));
       responseObserver.onCompleted();
     } catch (NumberFormatException e) {
       responseObserver.
@@ -76,12 +77,9 @@ public class ProductGrpcController extends ProductServiceGrpc.ProductServiceImpl
                             final StreamObserver<UpdateProductResponse> responseObserver)
   {
     try {
-      final UpdateProductDto command = mapper.toUpdateCommand(req);
-      final ProductEntity updated = productService.updateProduct(command);
-      responseObserver.
-          onNext(UpdateProductResponse
-              .newBuilder()
-              .setProduct(mapper.toProto(updated)).build());
+      final UpdateProductDto request = mapper.toUpdateReq(req);
+      final ProductEntity updated = productService.updateProduct(request);
+      responseObserver.onNext(mapper.toUpdateProductResponse(updated));
       responseObserver.onCompleted();
     } catch (IllegalArgumentException e) {
       responseObserver.
@@ -105,11 +103,7 @@ public class ProductGrpcController extends ProductServiceGrpc.ProductServiceImpl
     try {
       final long id = Long.parseLong(req.getId());
       final ProductEntity deletedProduct = productService.deleteProduct(id);
-      responseObserver.
-          onNext(DeleteProductResponse.newBuilder()
-              .setSuccess(true)
-              .setProduct(mapper.toProto(deletedProduct))
-              .build());
+      responseObserver.onNext(mapper.toDeleteProductResponse(deletedProduct));
       responseObserver.onCompleted();
     } catch (NumberFormatException e) {
       responseObserver.
@@ -130,12 +124,7 @@ public class ProductGrpcController extends ProductServiceGrpc.ProductServiceImpl
     try {
       final ListProductsDto criteria = mapper.toListCriteria(req);
       final var page = productService.listProducts(criteria);
-
-      final ListProductsResponse.Builder rb = ListProductsResponse.newBuilder();
-      page.getContent().forEach(prod -> rb.addProducts(mapper.toProto(prod)));
-      rb.setPage(criteria.getPage())
-          .setPageSize(criteria.getPageSize()).setTotal((int) page.getTotalElements());
-      responseObserver.onNext(rb.build());
+      responseObserver.onNext(mapper.toListProductsResponse(criteria, page));
       responseObserver.onCompleted();
     } catch (Exception e) {
       responseObserver.
@@ -150,8 +139,8 @@ public class ProductGrpcController extends ProductServiceGrpc.ProductServiceImpl
                            final StreamObserver<ReserveStockResponse> responseObserver)
   {
     try {
-      final ReserveStockDto command = mapper.toReserveCommand(req);
-      final ReservationEntity r = productService.reserveStock(command);
+      final ReserveStockDto request = mapper.toReserveReq(req);
+      final ReservationEntity r = productService.reserveStock(request);
       responseObserver.onNext(mapper.toReserveResponse(r.getReservationId()));
       responseObserver.onCompleted();
     } catch (NumberFormatException e) {
@@ -177,8 +166,8 @@ public class ProductGrpcController extends ProductServiceGrpc.ProductServiceImpl
                                  final StreamObserver<ConfirmReservationResponse> responseObserver)
   {
     try {
-      final ConfirmReservationDto command = mapper.toConfirmCommand(req);
-      productService.confirmReservation(command);
+      final ConfirmReservationDto request = mapper.toConfirmReq(req);
+      productService.confirmReservation(request);
       responseObserver.onNext(mapper.toConfirmResponse());
       responseObserver.onCompleted();
     } catch (NotFoundException nfe) {
@@ -198,8 +187,8 @@ public class ProductGrpcController extends ProductServiceGrpc.ProductServiceImpl
                                  final StreamObserver<ReleaseReservationResponse> responseObserver)
   {
     try {
-      final ReleaseReservationDto command = mapper.toReleaseCommand(req);
-      productService.releaseReservation(command);
+      final ReleaseReservationDto request = mapper.toReleaseReq(req);
+      productService.releaseReservation(request);
       responseObserver.onNext(mapper.toReleaseResponse());
       responseObserver.onCompleted();
     } catch (NotFoundException nfe) {

@@ -51,12 +51,10 @@ public class ProductEntity extends Auditable {
   @Column(name = "status", nullable = false)
   private ProductStatusEnums status = ProductStatusEnums.ACTIVE;
 
-  // optimistic locking field — product owns concurrency
   @Version
   @Column(name = "version")
   private Long version;
 
-  // extensible metadata — stored as JSON text
   @Convert(converter = MapJsonConverter.class)
   @Column(columnDefinition = "TEXT")
   private Map<String, String> metadata;

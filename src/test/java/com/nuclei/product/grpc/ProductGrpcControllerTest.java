@@ -1,6 +1,11 @@
 package com.nuclei.product.grpc;
 
-import com.nuclei.product.dto.*;
+import com.nuclei.product.dto.CreateProductDto;
+import com.nuclei.product.dto.UpdateProductDto;
+import com.nuclei.product.dto.ListProductsDto;
+import com.nuclei.product.dto.ReserveStockDto;
+import com.nuclei.product.dto.ConfirmReservationDto;
+import com.nuclei.product.dto.ReleaseReservationDto;
 import com.nuclei.product.entity.ProductEntity;
 import com.nuclei.product.entity.ReservationEntity;
 import com.nuclei.product.exception.NotFoundException;
@@ -12,7 +17,7 @@ import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -20,9 +25,10 @@ import org.springframework.data.domain.PageImpl;
 import java.util.List;
 import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 public class ProductGrpcControllerTest {
@@ -54,18 +60,22 @@ public class ProductGrpcControllerTest {
         .setProduct(RequestProduct.newBuilder().setName("a").setPrice(Money.newBuilder().setAmount(1).setCurrency("INR").build()).setStockQuantity(1).build())
         .build();
     CreateProductDto cmd = new CreateProductDto();
-    when(mapper.toCreateCommand(req)).thenReturn(cmd);
+    when(mapper.toCreateReq(req)).thenReturn(cmd);
     ProductEntity saved = new ProductEntity();
+    saved.setId(1L);
+    saved.setName("a");
     when(productService.createProduct(cmd)).thenReturn(saved);
-    Product proto = Product.newBuilder().setId("1").build();
-    when(mapper.toProto(saved)).thenReturn(proto);
+    CreateProductResponse response = CreateProductResponse.newBuilder()
+        .setProduct(Product.newBuilder().setId("1").build())
+        .build();
+    when(mapper.toCreateProductResponse(saved)).thenReturn(response);
 
     TestObserver<CreateProductResponse> obs = new TestObserver<>();
     controller.createProduct(req, obs);
 
     assertThat(obs.error).isNull();
     assertThat(obs.completed).isTrue();
-    assertThat(obs.next.getProduct()).isEqualTo(proto);
+    assertThat(obs.next).isEqualTo(response);
   }
 
   @Test
@@ -92,7 +102,7 @@ public class ProductGrpcControllerTest {
   void updateProduct_versionMismatch_mapsAborted() {
     UpdateProductRequest req = UpdateProductRequest.newBuilder().setId("1").build();
     UpdateProductDto cmd = new UpdateProductDto();
-    when(mapper.toUpdateCommand(req)).thenReturn(cmd);
+    when(mapper.toUpdateReq(req)).thenReturn(cmd);
     when(productService.updateProduct(cmd)).thenThrow(new IllegalStateException("version mismatch"));
     TestObserver<UpdateProductResponse> obs = new TestObserver<>();
     controller.updateProduct(req, obs);
@@ -113,21 +123,30 @@ public class ProductGrpcControllerTest {
   void listProducts_success() {
     ListProductsRequest req = ListProductsRequest.newBuilder().setPage(1).setPageSize(2).build();
     ListProductsDto criteria = new ListProductsDto();
+    criteria.setPage(1);
+    criteria.setPageSize(2);
     when(mapper.toListCriteria(req)).thenReturn(criteria);
-    when(productService.listProducts(criteria)).thenReturn(new PageImpl<>(List.of()))
-        ;
+    Page<ProductEntity> page = new PageImpl<>(List.of());
+    when(productService.listProducts(criteria)).thenReturn(page);
+    ListProductsResponse response = ListProductsResponse.newBuilder()
+        .setPage(1)
+        .setPageSize(2)
+        .setTotal(0)
+        .build();
+    when(mapper.toListProductsResponse(criteria, page)).thenReturn(response);
+    
     TestObserver<ListProductsResponse> obs = new TestObserver<>();
     controller.listProducts(req, obs);
     assertThat(obs.error).isNull();
     assertThat(obs.completed).isTrue();
-    assertThat(obs.next.getPage()).isEqualTo(1);
+    assertThat(obs.next).isEqualTo(response);
   }
 
   @Test
   void reserveStock_insufficient_mapsFailedPrecondition() {
     ReserveStockRequest req = ReserveStockRequest.newBuilder().setProductId("1").setQuantity(5).build();
     ReserveStockDto cmd = new ReserveStockDto();
-    when(mapper.toReserveCommand(req)).thenReturn(cmd);
+    when(mapper.toReserveReq(req)).thenReturn(cmd);
     when(productService.reserveStock(cmd)).thenThrow(new com.nuclei.product.exception.InsufficientStockException("nope"));
     TestObserver<ReserveStockResponse> obs = new TestObserver<>();
     controller.reserveStock(req, obs);
@@ -139,7 +158,7 @@ public class ProductGrpcControllerTest {
   void reserveStock_illegalState_mapsAborted() {
     ReserveStockRequest req = ReserveStockRequest.newBuilder().setProductId("1").setQuantity(5).build();
     ReserveStockDto cmd = new ReserveStockDto();
-    when(mapper.toReserveCommand(req)).thenReturn(cmd);
+    when(mapper.toReserveReq(req)).thenReturn(cmd);
     when(productService.reserveStock(cmd)).thenThrow(new IllegalStateException("version"));
     TestObserver<ReserveStockResponse> obs = new TestObserver<>();
     controller.reserveStock(req, obs);
@@ -151,7 +170,7 @@ public class ProductGrpcControllerTest {
   void reserveStock_success() {
     ReserveStockRequest req = ReserveStockRequest.newBuilder().setProductId("1").setQuantity(2).build();
     ReserveStockDto cmd = new ReserveStockDto();
-    when(mapper.toReserveCommand(req)).thenReturn(cmd);
+    when(mapper.toReserveReq(req)).thenReturn(cmd);
     ReservationEntity res = ReservationEntity.builder().reservationId("rid-123").build();
     when(productService.reserveStock(cmd)).thenReturn(res);
     when(mapper.toReserveResponse("rid-123")).thenReturn(ReserveStockResponse.newBuilder().setSuccess(true).setReservationId("rid-123").build());
@@ -166,7 +185,7 @@ public class ProductGrpcControllerTest {
   void confirmReservation_notFound_mapsNotFound() {
     ConfirmReservationRequest req = ConfirmReservationRequest.newBuilder().setReservationId("r1").build();
     ConfirmReservationDto cmd = new ConfirmReservationDto();
-    when(mapper.toConfirmCommand(req)).thenReturn(cmd);
+    when(mapper.toConfirmReq(req)).thenReturn(cmd);
     when(productService.confirmReservation(cmd)).thenThrow(new NotFoundException("missing"));
     TestObserver<ConfirmReservationResponse> obs = new TestObserver<>();
     controller.confirmReservation(req, obs);
@@ -178,7 +197,7 @@ public class ProductGrpcControllerTest {
   void releaseReservation_notFound_mapsNotFound() {
     ReleaseReservationRequest req = ReleaseReservationRequest.newBuilder().setReservationId("r1").build();
     ReleaseReservationDto cmd = new ReleaseReservationDto();
-    when(mapper.toReleaseCommand(req)).thenReturn(cmd);
+    when(mapper.toReleaseReq(req)).thenReturn(cmd);
     when(productService.releaseReservation(cmd)).thenThrow(new NotFoundException("missing"));
     TestObserver<ReleaseReservationResponse> obs = new TestObserver<>();
     controller.releaseReservation(req, obs);
@@ -190,8 +209,8 @@ public class ProductGrpcControllerTest {
   void confirmReservation_success() {
     ConfirmReservationRequest req = ConfirmReservationRequest.newBuilder().setReservationId("r1").build();
     ConfirmReservationDto cmd = new ConfirmReservationDto();
-    when(mapper.toConfirmCommand(req)).thenReturn(cmd);
-    doReturn(ConfirmReservationResponse.newBuilder().setSuccess(true).build()).when(mapper).toConfirmResponse();
+    when(mapper.toConfirmReq(req)).thenReturn(cmd);
+    when(mapper.toConfirmResponse()).thenReturn(ConfirmReservationResponse.newBuilder().setSuccess(true).build());
     TestObserver<ConfirmReservationResponse> obs = new TestObserver<>();
     controller.confirmReservation(req, obs);
     assertThat(obs.error).isNull();
@@ -203,8 +222,8 @@ public class ProductGrpcControllerTest {
   void releaseReservation_success() {
     ReleaseReservationRequest req = ReleaseReservationRequest.newBuilder().setReservationId("r1").build();
     ReleaseReservationDto cmd = new ReleaseReservationDto();
-    when(mapper.toReleaseCommand(req)).thenReturn(cmd);
-    doReturn(ReleaseReservationResponse.newBuilder().setSuccess(true).build()).when(mapper).toReleaseResponse();
+    when(mapper.toReleaseReq(req)).thenReturn(cmd);
+    when(mapper.toReleaseResponse()).thenReturn(ReleaseReservationResponse.newBuilder().setSuccess(true).build());
     TestObserver<ReleaseReservationResponse> obs = new TestObserver<>();
     controller.releaseReservation(req, obs);
     assertThat(obs.error).isNull();

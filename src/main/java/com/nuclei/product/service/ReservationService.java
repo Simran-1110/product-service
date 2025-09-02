@@ -13,7 +13,7 @@ import java.util.List;
 
 @Component
 @Slf4j
-public class ReservationSweeperService {
+public class ReservationService {
 
   private static final String IN_PROGRESS = "IN_PROGRESS";
   private static final String RELEASED = "RELEASED";
@@ -22,9 +22,9 @@ public class ReservationSweeperService {
   private final ProductStockService productStockService;
   private final MeterRegistry meterRegistry;
 
-  public ReservationSweeperService(final ReservationRepository reservationRepository,
-                                   final ProductStockService productStockService,
-                                   final MeterRegistry meterRegistry) {
+  public ReservationService(final ReservationRepository reservationRepository,
+                            final ProductStockService productStockService,
+                            final MeterRegistry meterRegistry) {
     this.reservationRepository = reservationRepository;
     this.productStockService = productStockService;
     this.meterRegistry = meterRegistry;

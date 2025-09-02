@@ -1,6 +1,8 @@
 package com.nuclei.product.service.impl;
 
+import com.nuclei.product.dao.IProductDao;
 import com.nuclei.product.entity.ProductEntity;
+import com.nuclei.product.enums.ProductStatusEnums;
 import com.nuclei.product.service.IRedisCacheService;
 import com.nuclei.product.util.RedisCacheUtil;
 import lombok.extern.slf4j.Slf4j;
@@ -9,27 +11,29 @@ import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
-import java.util.Optional;
 
+/**
+ * Redis cache service implementation
+ */
 @Slf4j
 @Service
 public class RedisCacheServiceImpl implements IRedisCacheService {
 
     private final RedisCacheUtil redisCacheUtil;
 
-    @Value("${cache.product.ttl:7200}") // 2 hours default
-    private long productCacheTtl;
+    @Value("${cache.product.ttl:7200}")
+    private int productCacheTtl;
 
-    @Value("${cache.product-list.ttl:1800}") // 30 minutes default
-    private long productListCacheTtl;
+    @Value("${cache.product-list.ttl:1800}")
+    private int productListCacheTtl;
 
-    public RedisCacheServiceImpl(RedisCacheUtil redisCacheUtil) {
+    public RedisCacheServiceImpl(final RedisCacheUtil redisCacheUtil) {
         this.redisCacheUtil = redisCacheUtil;
     }
 
     @Override
-    public void cacheProduct(Long productId, ProductEntity product) {
-        if (product == null || product.getStatus() == com.nuclei.product.enums.ProductStatusEnums.DISCONTINUED) {
+    public void cacheProduct(final Long productId, final ProductEntity product) {
+        if (product == null || product.getStatus() == ProductStatusEnums.DISCONTINUED) {
             log.debug("Skipping cache for null or discontinued product: {}", productId);
             return;
         }
@@ -43,52 +47,52 @@ public class RedisCacheServiceImpl implements IRedisCacheService {
         try {
             redisCacheUtil.cacheProduct(productId, product);
             log.debug("Successfully cached product: {}", productId);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             log.error("Failed to cache product: {}", productId, e);
         }
     }
 
     @Override
-    public Optional<ProductEntity> getCachedProduct(Long productId) {
+    public ProductEntity getCachedProduct(final Long productId) {
         try {
             return redisCacheUtil.getCachedProduct(productId);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             log.error("Failed to get cached product: {}", productId, e);
-            return Optional.empty();
+            return null;
         }
     }
 
     @Override
-    public void cacheProductList(String cacheKey, Page<ProductEntity> productPage) {
+    public void cacheProductList(final String cacheKey, final Page<ProductEntity> productPage) {
         if (productPage == null || productPage.isEmpty()) {
-            log.debug("Skipping cache for null or empty product page");
+            log.debug("Skipping cache for empty product page with key: {}", cacheKey);
             return;
         }
 
         try {
             redisCacheUtil.cacheProductList(cacheKey, productPage);
             log.debug("Successfully cached product list with key: {}", cacheKey);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             log.error("Failed to cache product list with key: {}", cacheKey, e);
         }
     }
 
     @Override
-    public Optional<Page<ProductEntity>> getCachedProductList(String cacheKey) {
+    public Page<ProductEntity> getCachedProductList(final String cacheKey) {
         try {
             return redisCacheUtil.getCachedProductList(cacheKey);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             log.error("Failed to get cached product list with key: {}", cacheKey, e);
-            return Optional.empty();
+            return null;
         }
     }
 
     @Override
-    public void invalidateProduct(Long productId) {
+    public void invalidateProduct(final Long productId) {
         try {
             redisCacheUtil.invalidateProduct(productId);
-            log.debug("Invalidated product cache: {}", productId);
-        } catch (Exception e) {
+            log.debug("Successfully invalidated product cache: {}", productId);
+        } catch (final Exception e) {
             log.error("Failed to invalidate product cache: {}", productId, e);
         }
     }
@@ -97,8 +101,8 @@ public class RedisCacheServiceImpl implements IRedisCacheService {
     public void invalidateAllProductLists() {
         try {
             redisCacheUtil.invalidateAllProductLists();
-            log.debug("Invalidated all product list caches");
-        } catch (Exception e) {
+            log.debug("Successfully invalidated all product list caches");
+        } catch (final Exception e) {
             log.error("Failed to invalidate all product list caches", e);
         }
     }
@@ -107,47 +111,48 @@ public class RedisCacheServiceImpl implements IRedisCacheService {
     public void invalidateAllProducts() {
         try {
             redisCacheUtil.invalidateAllProducts();
-            log.debug("Invalidated all product caches");
-        } catch (Exception e) {
+            log.debug("Successfully invalidated all product caches");
+        } catch (final Exception e) {
             log.error("Failed to invalidate all product caches", e);
         }
     }
 
     @Override
-    public String generateProductListCacheKey(int page, int size, boolean availableOnly, Map<String, Object> filters) {
+    public String generateProductListCacheKey(
+        final int page,
+        final int size,
+        final boolean availableOnly,
+        final Map<String, Object> filters) {
         return redisCacheUtil.generateProductListCacheKey(page, size, availableOnly, filters);
     }
 
     @Override
     public boolean isRedisAvailable() {
         try {
-            // Try to perform a simple Redis operation
-            redisCacheUtil.exists("health-check");
-            return true;
-        } catch (Exception e) {
-            log.warn("Redis is not available: {}", e.getMessage());
+            return redisCacheUtil.exists("health-check");
+        } catch (final Exception e) {
+            log.warn("Redis health check failed", e);
             return false;
         }
     }
 
     @Override
-    public void onProductModified(Long productId) {
+    public void onProductModified(final Long productId) {
         log.debug("Product modified, invalidating caches for product: {}", productId);
         invalidateProduct(productId);
         invalidateAllProductLists();
     }
 
     @Override
-    public void onProductDeleted(Long productId) {
+    public void onProductDeleted(final Long productId) {
         log.debug("Product deleted, invalidating caches for product: {}", productId);
         invalidateProduct(productId);
         invalidateAllProductLists();
     }
 
     @Override
-    public void onStockModified(Long productId) {
-        log.debug("Stock modified, invalidating product list caches for product: {}", productId);
-        // Only invalidate list caches as individual product cache is still valid
+    public void onStockModified(final Long productId) {
+        log.debug("Stock modified, invalidating list caches for product: {}", productId);
         invalidateAllProductLists();
     }
 }

@@ -12,6 +12,7 @@ public class ProductStockService {
   private final ProductRepository productRepository;
 
   public ProductStockService(final ProductRepository productRepository) {
+
     this.productRepository = productRepository;
   }
 
@@ -22,7 +23,6 @@ public class ProductStockService {
   public void releaseStock(final Long productId, final Long quantity) {
     final int updated = productRepository.incrementStock(productId, quantity);
     if (updated == 0) {
-      // if no rows updated, product not found
       throw new NotFoundException("product not found: " + productId);
     }
   }

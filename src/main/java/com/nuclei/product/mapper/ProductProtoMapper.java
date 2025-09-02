@@ -4,6 +4,7 @@ import com.nuclei.product.dto.*;
 import com.nuclei.product.entity.ProductEntity;
 import com.nuclei.product.enums.ProductStatusEnums;
 import com.nuclei.product.v1.messages.*;
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
@@ -11,7 +12,7 @@ import java.util.Optional;
 @Component
 public class ProductProtoMapper {
 
-  public CreateProductDto toCreateCommand(final CreateProductRequest request) {
+  public CreateProductDto toCreateReq(final CreateProductRequest request) {
     final RequestProduct p = request.getProduct();
     final CreateProductDto cmd = new CreateProductDto();
     cmd.setName(p.getName());
@@ -32,7 +33,7 @@ public class ProductProtoMapper {
     return cmd;
   }
 
-  public UpdateProductDto toUpdateCommand(final UpdateProductRequest request) {
+  public UpdateProductDto toUpdateReq(final UpdateProductRequest request) {
     final UpdateProductDto cmd = new UpdateProductDto();
     cmd.setId(Long.parseLong(request.getId()));
     if (request.hasDescription()) {
@@ -68,7 +69,7 @@ public class ProductProtoMapper {
     return c;
   }
 
-  public ReserveStockDto toReserveCommand(final ReserveStockRequest req) {
+  public ReserveStockDto toReserveReq(final ReserveStockRequest req) {
     final ReserveStockDto c = new ReserveStockDto();
     c.setProductId(Long.parseLong(req.getProductId()));
     c.setQuantity(req.getQuantity());
@@ -84,7 +85,7 @@ public class ProductProtoMapper {
     return c;
   }
 
-  public ConfirmReservationDto toConfirmCommand(final ConfirmReservationRequest req) {
+  public ConfirmReservationDto toConfirmReq(final ConfirmReservationRequest req) {
     final ConfirmReservationDto c = new ConfirmReservationDto();
     c.setReservationId(req.getReservationId());
     if (req.hasOrderId()) {
@@ -93,7 +94,7 @@ public class ProductProtoMapper {
     return c;
   }
 
-  public ReleaseReservationDto toReleaseCommand(final ReleaseReservationRequest req) {
+  public ReleaseReservationDto toReleaseReq(final ReleaseReservationRequest req) {
     final ReleaseReservationDto c = new ReleaseReservationDto();
     c.setReservationId(req.getReservationId());
     if (req.hasReason()) {
@@ -150,5 +151,78 @@ public class ProductProtoMapper {
 
   public ReleaseReservationResponse toReleaseResponse() {
     return ReleaseReservationResponse.newBuilder().setSuccess(true).build();
+  }
+
+  public CreateProductResponse toCreateProductResponse(final ProductEntity product) {
+    return CreateProductResponse.newBuilder()
+        .setProduct(toProto(product))
+        .build();
+  }
+
+  public GetProductResponse toGetProductResponse(final ProductEntity product) {
+    return GetProductResponse.newBuilder()
+        .setProduct(toProto(product))
+        .build();
+  }
+
+  public UpdateProductResponse toUpdateProductResponse(final ProductEntity product) {
+    return UpdateProductResponse.newBuilder()
+        .setProduct(toProto(product))
+        .build();
+  }
+
+  public DeleteProductResponse toDeleteProductResponse(final ProductEntity product) {
+    return DeleteProductResponse.newBuilder()
+        .setSuccess(true)
+        .setProduct(toProto(product))
+        .build();
+  }
+
+  public ListProductsResponse toListProductsResponse(final ListProductsDto criteria, final Page<ProductEntity> page) {
+    final ListProductsResponse.Builder rb = ListProductsResponse.newBuilder();
+    page.getContent().forEach(prod -> rb.addProducts(toProto(prod)));
+    rb.setPage(criteria.getPage())
+        .setPageSize(criteria.getPageSize())
+        .setTotal((int) page.getTotalElements());
+    return rb.build();
+  }
+
+  /**
+   * Convert CreateProductDto to ProductEntity
+   */
+  public ProductEntity toEntity(final CreateProductDto request) {
+    final ProductEntity entity = new ProductEntity();
+    entity.setName(request.getName());
+    entity.setDescription(request.getDescription());
+    entity.setPriceAmount(request.getPriceAmount() == null ? 0.0 : request.getPriceAmount());
+    entity.setPriceCurrency(request.getPriceCurrency() == null ? "INR" : request.getPriceCurrency());
+    entity.setStockQuantity(request.getStockQuantity() == null ? 0L : request.getStockQuantity());
+    entity.setStatus(request.getStatus() == null ? ProductStatusEnums.ACTIVE : request.getStatus());
+    entity.setMetadata(request.getMetadata());
+    return entity;
+  }
+
+  /**
+   * Update existing ProductEntity with UpdateProductDto
+   */
+  public void updateEntity(final ProductEntity entity, final UpdateProductDto request) {
+    if (request.getName() != null) {
+      entity.setName(request.getName());
+    }
+    if (request.getDescription() != null) {
+      entity.setDescription(request.getDescription());
+    }
+    if (request.getPriceAmount() != null) {
+      entity.setPriceAmount(request.getPriceAmount());
+    }
+    if (request.getPriceCurrency() != null) {
+      entity.setPriceCurrency(request.getPriceCurrency());
+    }
+    if (request.getStockQuantity() != null) {
+      entity.setStockQuantity(request.getStockQuantity());
+    }
+    if (request.getStatus() != null) {
+      entity.setStatus(request.getStatus());
+    }
   }
 }
